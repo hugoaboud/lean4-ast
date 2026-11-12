@@ -1,5 +1,5 @@
 [package]
-name = "klean-ast"
+name = "lean4-ast"
 version = "0.1.0"
 edition = "2021"
 description = "Lean 4 syntax trees from Lean's own parser, through a static library"
@@ -7,7 +7,7 @@ license = "MIT"
 publish = false
 
 [lib]
-name = "klean_ast"
+name = "lean4_ast"
 path = "src/lib.rs"
 
 [dependencies]

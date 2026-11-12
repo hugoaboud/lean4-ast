@@ -1,5 +1,5 @@
 /-
-  KLEAN · lean4-ast wrapper
+  lean4-ast wrapper
 
   A thin standalone wrapper around Lean's own parser. Nothing here re-implements
   parsing: it calls `Lean.Parser.parseHeader` and `Lean.Parser.parseCommand` — the
@@ -7,10 +7,10 @@
   tree to JSON. There is no elaboration, no type checking and no diagnostics;
   syntax errors show up as `missing` nodes, exactly as the parser produced them.
 
-  Two functions are exported to C (see `shim/klean_ast_shim.c`):
+  Two functions are exported to C (see `shim/lean4_ast_shim.c`):
 
-    `klean_ast_lean_init`  — sets the module search path, reports the Lean version
-    `klean_ast_lean_parse` — takes `{"path":…,"source":…,"imports":[…]}` and answers
+    `lean4_ast_lean_init`  — sets the module search path, reports the Lean version
+    `lean4_ast_lean_parse` — takes `{"path":…,"source":…,"imports":[…]}` and answers
                              `{"ok":true,"nodes":[…],"syntaxErrors":n}`
 
   Environments are cached per import list, so parsing the next file of a project
@@ -21,7 +21,7 @@ import Lean.Elab.Frontend
 
 open Lean
 
-namespace KleanAst
+namespace Lean4Ast
 
 /-- A parsed command, or the header that opened the file. -/
 private structure Ctx where
@@ -199,17 +199,17 @@ private unsafe def initRequest (requestJson : String) : IO String := do
       ("searchPath", Json.arr (path.map (fun entry => toJson entry.toString) |>.toArray)),
     ]
 
-end KleanAst
+end Lean4Ast
 
-/-- C entry point: `klean_ast_init(search_paths)` → JSON. -/
-@[export klean_ast_lean_init]
-unsafe def kleanAstInit (searchPaths : String) : IO String :=
-  KleanAst.initRequest searchPaths
+/-- C entry point: `lean4_ast_init(search_paths)` → JSON. -/
+@[export lean4_ast_lean_init]
+unsafe def leanAstInit (searchPaths : String) : IO String :=
+  Lean4Ast.initRequest searchPaths
 
-/-- C entry point: `klean_ast_parse(request_json)` → JSON. -/
-@[export klean_ast_lean_parse]
-unsafe def kleanAstParse (requestJson : String) : IO String :=
-  KleanAst.parseRequest requestJson
+/-- C entry point: `lean4_ast_parse(request_json)` → JSON. -/
+@[export lean4_ast_lean_parse]
+unsafe def leanAstParse (requestJson : String) : IO String :=
+  Lean4Ast.parseRequest requestJson
 
 /-- Temporary probe: walks the steps a first parse needs, printing each one. -/
 @[export probe_steps]

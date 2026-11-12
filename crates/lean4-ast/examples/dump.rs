@@ -1,10 +1,10 @@
 //! Prints the syntax tree of a file, for looking at what Lean actually produces.
 
-use klean_ast::{init, parse, Options, ParseRequest};
+use lean4_ast::{init, parse, Options, ParseRequest};
 
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let sysroot = std::env::var("KLEAN_AST_SYSROOT").unwrap_or_default();
+    let sysroot = std::env::var("LEAN4_AST_SYSROOT").unwrap_or_default();
     let info = init(&Options::new(sysroot)).expect("init");
     eprintln!("lean {}", info.version);
 
@@ -17,7 +17,7 @@ fn main() {
     }
 }
 
-fn print_node(node: &klean_ast::Node, depth: usize, source: &str) {
+fn print_node(node: &lean4_ast::Node, depth: usize, source: &str) {
     let span = node.span().map(|s| format!("{}..{}", s.start, s.end)).unwrap_or_default();
     let text = node.text.as_deref().unwrap_or("");
     let slice = if node.children.is_empty() && text.is_empty() {

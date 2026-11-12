@@ -9,10 +9,10 @@
 //!
 //! ```text
 //! python3 lean4-ast/build.py            # builds the library, then runs these
-//! KLEAN_AST_SYSROOT=… cargo test -p klean-ast
+//! LEAN4_AST_SYSROOT=… cargo test -p lean4-ast
 //! ```
 
-use klean_ast::{init, parse, FileAst, Node, Options, ParseRequest};
+use lean4_ast::{init, parse, FileAst, Node, Options, ParseRequest};
 use std::sync::Once;
 
 /// Starts Lean once for the whole test binary.

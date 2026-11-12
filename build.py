@@ -10,11 +10,11 @@ What it does, in order:
      upstream is a one-line fix there;
   3. makes sure an elan toolchain for the tag exists (`lean-toolchain` in the
      checkout says which; installing one is opt-in with `--install-toolchain`);
-  4. builds `wrapper/KleanAst.lean` as a Lake library, compiles the generated C
-     and the C shim, and archives both into `build/libklean_ast.a`;
+  4. builds `wrapper/Lean4Ast.lean` as a Lake library, compiles the generated C
+     and the C shim, and archives both into `build/liblean4_ast.a`;
   5. writes `build/link.json` for the Rust crate — archive, include and library
      directories, `leanc`'s own flags, and the mangled initializer name;
-  6. builds and tests `crates/klean-ast`, whose tests document the language
+  6. builds and tests `crates/lean4-ast`, whose tests document the language
      features the wrapper covers.
 
 Every step prints what it did; `--force` repeats steps that are already done, and
@@ -44,7 +44,7 @@ HERE = Path(__file__).resolve().parent
 CACHE = HERE / ".cache"
 BUILD = HERE / "build"
 LEAN_DIR = HERE / "lean"          # the Lake package holding the wrapper
-CRATE = HERE / "crates" / "klean-ast"
+CRATE = HERE / "crates" / "lean4-ast"
 MANIFEST = HERE / "manifest.json"
 
 
@@ -272,16 +272,16 @@ def build_library(toolchain: Path, tag: str, force: bool) -> dict:
     # The Lake package is what compiles the wrapper: a module of a package gets a
     # library-style initializer, which is what a host process needs.
     LEAN_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(HERE / "wrapper" / "KleanAst.lean", LEAN_DIR / "KleanAst.lean")
+    shutil.copy2(HERE / "wrapper" / "Lean4Ast.lean", LEAN_DIR / "Lean4Ast.lean")
     (LEAN_DIR / "lean-toolchain").write_text(toolchain.name + "\n")
     (LEAN_DIR / "lakefile.toml").write_text(
-        'name = "klean-ast"\nversion = "0.1.0"\n\n[[lean_lib]]\nname = "KleanAst"\n'
+        'name = "lean4-ast"\nversion = "0.1.0"\n\n[[lean_lib]]\nname = "Lean4Ast"\n'
     )
 
     log("building the wrapper with lake")
-    run([str(toolchain / "bin" / "lake"), "build", "KleanAst"], cwd=LEAN_DIR)
+    run([str(toolchain / "bin" / "lake"), "build", "Lean4Ast"], cwd=LEAN_DIR)
 
-    generated_c = LEAN_DIR / ".lake" / "build" / "ir" / "KleanAst.c"
+    generated_c = LEAN_DIR / ".lake" / "build" / "ir" / "Lean4Ast.c"
     if not generated_c.is_file():
         fail(f"lake did not produce {generated_c}")
     initializer = re.search(
@@ -298,17 +298,17 @@ def build_library(toolchain: Path, tag: str, force: bool) -> dict:
 
     objects = []
     for source, name in (
-        (generated_c, "KleanAst.o"),
-        (HERE / "shim" / "klean_ast_shim.c", "shim.o"),
+        (generated_c, "Lean4Ast.o"),
+        (HERE / "shim" / "lean4_ast_shim.c", "shim.o"),
     ):
         obj = BUILD / name
         log(f"compiling {source.name}")
-        extra = [f"-DKLEAN_AST_INIT_FN={init_fn}"] if name == "shim.o" else []
+        extra = [f"-DLEAN4_AST_INIT_FN={init_fn}"] if name == "shim.o" else []
         run(["cc", "-c", str(source), "-o", str(obj), *cflags, *extra, "-O2"])
 
         objects.append(obj)
 
-    archive = BUILD / "libklean_ast.a"
+    archive = BUILD / "liblean4_ast.a"
     if archive.exists():
         archive.unlink()
     log(f"archiving {archive.name}")
@@ -333,8 +333,8 @@ def build_library(toolchain: Path, tag: str, force: bool) -> dict:
 
 def build_crate(link: dict, skip_tests: bool) -> None:
     environment = dict(os.environ)
-    environment["KLEAN_AST_LINK"] = str(BUILD / "link.json")
-    environment["KLEAN_AST_SYSROOT"] = link["toolchain"]
+    environment["LEAN4_AST_LINK"] = str(BUILD / "link.json")
+    environment["LEAN4_AST_SYSROOT"] = link["toolchain"]
     log("building the Rust crate")
     subprocess.run(["cargo", "build", "--quiet"], cwd=CRATE, env=environment, check=True)
     if skip_tests:

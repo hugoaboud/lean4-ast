@@ -1,11 +1,11 @@
 // Scratch benchmark (deleted after use).
-use klean_ast::{init, parse, Options, ParseRequest};
+use lean4_ast::{init, parse, Options, ParseRequest};
 use std::time::Instant;
 
 fn main() {
     let path = std::env::args().nth(1).expect("file");
     let source = std::fs::read_to_string(&path).expect("read");
-    let sysroot = std::env::var("KLEAN_AST_SYSROOT").unwrap_or_default();
+    let sysroot = std::env::var("LEAN4_AST_SYSROOT").unwrap_or_default();
     let t = Instant::now();
     init(&Options::new(sysroot)).expect("init");
     println!("init      {:>9.1?}", t.elapsed());

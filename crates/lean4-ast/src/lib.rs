@@ -1,16 +1,16 @@
 //! Lean 4 syntax trees, from Lean's own parser, in process.
 //!
 //! This crate is a thin Rust face over a static library that `lean4-ast/build.py`
-//! compiles out of a small Lean wrapper (`wrapper/KleanAst.lean`). The wrapper
+//! compiles out of a small Lean wrapper (`wrapper/Lean4Ast.lean`). The wrapper
 //! calls `Lean.Parser.parseHeader` and `Lean.Parser.parseCommand` — the parser the
 //! Lean frontend itself uses — and serialises the resulting `Syntax` tree. There
 //! is no elaboration, no type checking and no diagnostics here: a file that does
 //! not type check still parses, and a syntax error shows up as a `missing` node.
 //!
 //! ```no_run
-//! use klean_ast::{init, parse, Options, ParseRequest};
+//! use lean4_ast::{init, parse, Options, ParseRequest};
 //!
-//! # fn main() -> Result<(), klean_ast::Error> {
+//! # fn main() -> Result<(), lean4_ast::Error> {
 //! init(&Options::new("/home/me/.elan/toolchains/leanprover--lean4---v4.36.0-rc2"))?;
 //! let file = parse(ParseRequest {
 //!     path: "Demo.lean",
@@ -46,11 +46,11 @@ pub use serde_json::Value;
 ///
 /// The parser is statically linked, so it reads oleans only from a toolchain of
 /// exactly this version — see [`Options`].
-pub const LEAN_VERSION: &str = env!("KLEAN_AST_LEAN_VERSION");
+pub const LEAN_VERSION: &str = env!("LEAN4_AST_LEAN_VERSION");
 
 /// The toolchain directory the library was built with, on the machine that built
 /// it. Empty when `build.py` did not record one.
-pub const BUILD_TOOLCHAIN: &str = env!("KLEAN_AST_TOOLCHAIN");
+pub const BUILD_TOOLCHAIN: &str = env!("LEAN4_AST_TOOLCHAIN");
 
 /// Byte range inside the parsed source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,7 +228,7 @@ impl Options {
 
     /// Reads the toolchain location from the environment, for tests.
     pub fn from_env() -> Options {
-        let sysroot = std::env::var("KLEAN_AST_SYSROOT").unwrap_or_else(|_| {
+        let sysroot = std::env::var("LEAN4_AST_SYSROOT").unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_default();
             format!("{home}/.elan/toolchains/leanprover--lean4---v4.36.0-rc2")
         });
@@ -273,9 +273,9 @@ mod ffi {
     use std::os::raw::c_char;
 
     extern "C" {
-        pub fn klean_ast_init(request_json: *const c_char) -> *mut c_char;
-        pub fn klean_ast_parse(request_json: *const c_char) -> *mut c_char;
-        pub fn klean_ast_string_free(text: *mut c_char);
+        pub fn lean4_ast_init(request_json: *const c_char) -> *mut c_char;
+        pub fn lean4_ast_parse(request_json: *const c_char) -> *mut c_char;
+        pub fn lean4_ast_string_free(text: *mut c_char);
     }
 }
 
@@ -308,7 +308,7 @@ fn call(
     }
     let owned = unsafe { std::ffi::CStr::from_ptr(answer) };
     let body = owned.to_string_lossy().to_string();
-    unsafe { ffi::klean_ast_string_free(answer) };
+    unsafe { ffi::lean4_ast_string_free(answer) };
     let parsed: serde_json::Value = serde_json::from_str(&body)
         .map_err(|error| Error::Format(format!("{error}: {body}")))?;
     match parsed.get("ok").and_then(Value::as_bool) {
@@ -338,7 +338,7 @@ pub fn init(options: &Options) -> Result<Info, Error> {
             .map(|path| path.to_string_lossy().to_string())
             .collect::<Vec<_>>(),
     });
-    let answer = call(ffi::klean_ast_init, &request)?;
+    let answer = call(ffi::lean4_ast_init, &request)?;
     let info: Info = serde_json::from_value(answer)
         .map_err(|error| Error::Format(format!("init: {error}")))?;
     *current().lock().expect("info lock") = Some(info.clone());
@@ -358,7 +358,7 @@ pub fn parse(request: ParseRequest<'_>) -> Result<FileAst, Error> {
         "source": request.source,
         "imports": request.imports,
     });
-    let answer = call(ffi::klean_ast_parse, &payload)?;
+    let answer = call(ffi::lean4_ast_parse, &payload)?;
     serde_json::from_value(answer).map_err(|error| Error::Format(format!("parse: {error}")))
 }
 

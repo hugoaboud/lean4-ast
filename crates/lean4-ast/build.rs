@@ -12,11 +12,11 @@ use std::path::{Path, PathBuf};
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let default = manifest.join("../../build/link.json");
-    let link_file = std::env::var_os("KLEAN_AST_LINK")
+    let link_file = std::env::var_os("LEAN4_AST_LINK")
         .map(PathBuf::from)
         .unwrap_or(default);
 
-    println!("cargo:rerun-if-env-changed=KLEAN_AST_LINK");
+    println!("cargo:rerun-if-env-changed=LEAN4_AST_LINK");
     println!("cargo:rerun-if-changed={}", link_file.display());
 
     let text = std::fs::read_to_string(&link_file).unwrap_or_else(|error| {
@@ -45,12 +45,12 @@ fn main() {
         .and_then(|value| value.as_str())
         .or_else(|| link.get("tag").and_then(|value| value.as_str()))
         .unwrap_or("unknown");
-    println!("cargo:rustc-env=KLEAN_AST_LEAN_VERSION={version}");
+    println!("cargo:rustc-env=LEAN4_AST_LEAN_VERSION={version}");
     let toolchain = link
         .get("toolchain")
         .and_then(|value| value.as_str())
         .unwrap_or("");
-    println!("cargo:rustc-env=KLEAN_AST_TOOLCHAIN={toolchain}");
+    println!("cargo:rustc-env=LEAN4_AST_TOOLCHAIN={toolchain}");
 
     // Lean's own flags, in Lean's own order: the archives have to be repeated
     // inside the same groups `leanc` uses, or the static link fails.
