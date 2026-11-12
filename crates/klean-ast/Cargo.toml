@@ -1,0 +1,18 @@
+[package]
+name = "klean-ast"
+version = "0.1.0"
+edition = "2021"
+description = "Lean 4 syntax trees from Lean's own parser, through a static library"
+license = "MIT"
+publish = false
+
+[lib]
+name = "klean_ast"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+serde_json = "1"

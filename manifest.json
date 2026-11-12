@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "What lean4-ast depends on in the lean4 checkout, and how to build against it.",
+    "",
+    "Everything the wrapper needs at run time comes from the *toolchain*: Lean's",
+    "parser, its macro expander and the `Init`/`Std`/`Lean` libraries are compiled",
+    "into the toolchain's oleans, which is what the library imports and parses with.",
+    "The files listed below are the ones that decide what the parser can parse;",
+    "`build.py` copies them out of the checkout at the pinned tag, verifies that",
+    "each pattern still matches something, and records their hashes.",
+    "",
+    "When upstream renames or moves a file, verification fails and names the pattern",
+    "that broke: fix it here, nothing else needs to change."
+  ],
+  "repo": "https://github.com/leanprover/lean4",
+  "tag_policy": "latest",
+  "parse_sources": [
+    {
+      "pattern": "src/Init/**/*.lean",
+      "why": "the `Init` library: core syntax of every Lean file, literals, `do`, `match`, `where`"
+    },
+    {
+      "pattern": "src/Std/**/*.lean",
+      "why": "`Std`, which every module imports and which declares syntax of its own"
+    },
+    {
+      "pattern": "src/Lean/Parser/**/*.lean",
+      "why": "the parser: module structure, commands, terms, tactics, levels"
+    },
+    {
+      "pattern": "src/Lean/Elab/Quotation/**/*.lean",
+      "why": "`syntax`/`macro_rules` quotations, which is how macro-heavy files parse"
+    },
+    {
+      "pattern": "src/Lean/Elab/**/*.lean",
+      "why": "command elaborators declare the syntax extensions their commands need"
+    },
+    {
+      "pattern": "src/Lean/Meta/Tactic/**/*.lean",
+      "why": "tactic syntax (`by` blocks), which is what proofs are parsed as"
+    },
+    {
+      "pattern": "src/Lean/Compiler/**/*.lean",
+      "why": "`macro_rules` expansion goes through the compiler-side metaprograms"
+    },
+    {
+      "pattern": "lean-toolchain",
+      "why": "the tag's own toolchain, which the library is built and run against"
+    },
+    {
+      "pattern": "src/CMakeLists.txt",
+      "why": "records how Lean builds its libraries and links them when embedding"
+    }
+  ],
+  "syntax_inventory": {
+    "_comment": "Files whose `syntax` declarations define the language surface the tests cover.",
+    "files": [
+      "src/Init/Prelude.lean",
+      "src/Init/Notation.lean",
+      "src/Lean/Parser/Term.lean",
+      "src/Lean/Parser/Command.lean",
+      "src/Lean/Parser/Tactic.lean",
+      "src/Lean/Parser/Module.lean",
+      "src/Lean/Parser/Basic.lean",
+      "src/Lean/Parser/Do.lean"
+    ]
+  }
+}
