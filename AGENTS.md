@@ -1,19 +1,26 @@
 # lean4-ast
 
 Lean 4 syntax trees, parsed by Lean's own parser, callable from Rust without a
-subprocess.
+subprocess — and read where Lean left them.
 
 ## What it is
 
 Three thin layers, and no parser of our own:
 
 ```
-wrapper/Lean4Ast.lean   ~250 lines: calls Lean.Parser.parseHeader + parseCommand,
-                        serialises the Syntax tree to JSON. Nothing more.
-shim/…_shim.c           starts the Lean runtime, hands back JSON strings.
-crates/lean4-ast/       Rust: links the static library, parses the JSON, exposes
-                        a small API (kind, spans, children, text, missing).
+wrapper/Lean4Ast.lean   ~150 lines: calls Lean.Parser.parseHeader + parseCommand
+                        and hands the `Syntax` tree back as it is. Nothing more.
+shim/…_shim.c           starts the Lean runtime, passes the tree's objects across.
+crates/lean4-ast/       Rust: links the static library and reads Lean's heap
+                        directly (kind, spans, children, text, missing).
 ```
+
+There is no intermediate representation: the tree Lean's parser built is the tree
+the caller reads. `crates/lean4-ast/src/raw.rs` states Lean's object layout in
+Rust, `src/syntax.rs` is the borrowed view over it, and
+`crates/lean4-ast/src/materialize.rs` copies it into owned `Node`s for callers
+that want it. Nothing is serialised on the way, which is what
+[`BENCHMARK.md`](BENCHMARK.md) measures.
 
 `build.py` puts the three together into `build/liblean4_ast.a` plus
 `build/link.json`, and the crate's `build.rs` reads that file so no Lean path or
@@ -60,6 +67,25 @@ that embeddable:
   the binary and must not list `cdylib` in its `crate-type`; `link.json` is meant
   for executable targets only.
 
+### Reading Lean's heap
+
+A `Syntax` tree handed to Rust is a graph of Lean objects: a header, then a tag
+(`missing` 0, `node` 1, `atom` 2, `ident` 3), then the constructor's fields.
+Reading it from another language is only sound if both sides agree on that
+layout, so the crate checks rather than assumes:
+
+- `lean4_ast_layout` has the C side report `sizeof`/`offsetof` and the bytes of a
+  header with known field values; `raw::check` compares them with what Rust
+  compiled in;
+- the wrapper exports one `Syntax` per constructor (`lean4_ast_lean_probe`), so
+  the tags and field counts are checked against the tree Lean really produces;
+- the shim promotes each tree with `lean_mark_mt` before handing it over, which
+  makes its reference counts atomic — a `ParseTree` can then be moved to another
+  thread and dropped there, and the tree is never handed back to Lean.
+
+Both checks run once, on the first call, and fail loudly. A mismatch means the
+static library was built against another Lean; rebuild it with `build.py`.
+
 ## What the parser covers
 
 Every test in `crates/lean4-ast/tests/features.rs` is one minimal snippet per
@@ -100,7 +126,9 @@ places, both of which fail loudly instead of silently degrading:
 | --- | --- |
 | file paths, renamed modules | `manifest.json` → `parse_sources` (globs are verified) |
 | syntax kinds we map to rows | `crates/lean4-ast/tests/features.rs` |
-| syntax changes in the wrapper | `wrapper/Lean4Ast.lean` (thin: parse + JSON only) |
+| syntax changes in the wrapper | `wrapper/Lean4Ast.lean` (thin: parse, hand over) |
+| the `Syntax` inductive's shape | the probe in `wrapper/Lean4Ast.lean` fails the first call |
+| the runtime's object layout | `crates/lean4-ast/src/raw.rs` fails the first call |
 | link flags, library names | nothing — `leanc --print-ldflags` is asked at build time |
 | the pinned version | `python3 lean4-ast/build.py --tag <new tag>` |
 

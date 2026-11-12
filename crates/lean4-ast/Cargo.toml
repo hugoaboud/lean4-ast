@@ -1,8 +1,8 @@
 [package]
 name = "lean4-ast"
-version = "0.1.0"
+version = "4.36.0"
 edition = "2021"
-description = "Lean 4 syntax trees from Lean's own parser, through a static library"
+description = "Rust wrapper for the official Lean4 parser"
 license = "MIT"
 publish = false
 
@@ -11,8 +11,6 @@ name = "lean4_ast"
 path = "src/lib.rs"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 
 [build-dependencies]
 serde_json = "1"

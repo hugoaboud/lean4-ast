@@ -2,16 +2,24 @@
   lean4-ast wrapper
 
   A thin standalone wrapper around Lean's own parser. Nothing here re-implements
-  parsing: it calls `Lean.Parser.parseHeader` and `Lean.Parser.parseCommand` — the
-  same functions the Lean frontend uses — and serialises the resulting `Syntax`
-  tree to JSON. There is no elaboration, no type checking and no diagnostics;
+  parsing, and nothing is serialised: the functions below call
+  `Lean.Parser.parseHeader` and `Lean.Parser.parseCommand` — the same functions the
+  Lean frontend uses — and hand the resulting `Syntax` values back to the caller
+  as they are. The Rust crate reads those objects straight out of Lean's heap (see
+  `crates/lean4-ast/src/raw.rs`), so a file is never copied into an intermediate
+  representation. There is no elaboration, no type checking and no diagnostics;
   syntax errors show up as `missing` nodes, exactly as the parser produced them.
 
-  Two functions are exported to C (see `shim/lean4_ast_shim.c`):
+  Three functions are exported to C (see `shim/lean4_ast_shim.c`):
 
     `lean4_ast_lean_init`  — sets the module search path, reports the Lean version
-    `lean4_ast_lean_parse` — takes `{"path":…,"source":…,"imports":[…]}` and answers
-                             `{"ok":true,"nodes":[…],"syntaxErrors":n}`
+    `lean4_ast_lean_parse` — parses a file: path, source and import list in,
+                             `Array Syntax` plus the syntax error count out
+    `lean4_ast_lean_probe` — one `Syntax` per constructor, which is how the Rust
+                             side verifies the object tags and field counts it reads
+
+  Every answer is an `Except`: `.error` carries the reason as a `String`, so a
+  failure needs no side channel.
 
   Environments are cached per import list, so parsing the next file of a project
   does not re-load the modules it shares with the previous one.
@@ -23,51 +31,6 @@ open Lean
 
 namespace Lean4Ast
 
-/-- A parsed command, or the header that opened the file. -/
-private structure Ctx where
-  /-- Depth allowed in the JSON, so a pathological file cannot explode. -/
-  maxDepth : Nat := 96
-  /-- Nodes allowed in the JSON. -/
-  maxNodes : Nat := 400_000
-
-/-- Short, stable kind name: `Lean.Parser.Command.definition` → `definition`. -/
-private def shortKind (kind : SyntaxNodeKind) : String :=
-  match (kind.toString.splitOn ".").reverse with
-  | head :: _ => head
-  | [] => kind.toString
-
-private def spanJson (stx : Syntax) : Json :=
-  match stx.getPos? (canonicalOnly := true), stx.getTailPos? (canonicalOnly := true) with
-  | some start, some stop => Json.arr #[toJson start.byteIdx, toJson stop.byteIdx]
-  | _, _ => Json.null
-
-/-- One syntax node as JSON: kind, byte span, and — for tokens and identifiers —
-the text, plus the children. `missing` marks a token the parser had to invent
-because of a syntax error. -/
-private partial def nodeJson (ctx : Ctx) (budget : IO.Ref Nat) (depth : Nat) (stx : Syntax) :
-    IO Json := do
-  let left ← budget.modifyGet fun n => (n, n - 1)
-  let text : Json ←
-    match stx with
-    | .atom _ value => pure (toJson value)
-    | .ident _ _ name _ => pure (toJson name.toString)
-    | _ => pure Json.null
-  let children : Json ←
-    if depth >= ctx.maxDepth || left <= 0 then
-      pure (Json.arr #[])
-    else do
-      let mut out : Array Json := #[]
-      for child in stx.getArgs do
-        out := out.push (← nodeJson ctx budget (depth + 1) child)
-      pure (Json.arr out)
-  return Json.mkObj [
-    ("kind", toJson (shortKind stx.getKind)),
-    ("span", spanJson stx),
-    ("text", text),
-    ("missing", toJson stx.isMissing),
-    ("children", children),
-  ]
-
 /-- The commands of a header, with Lean's structural `null` wrappers peeled off so
 that `import` and `prelude` come out as nodes of their own, in file order. -/
 private partial def headerCommands (header : Syntax) (out : Array Syntax := #[]) : Array Syntax :=
@@ -75,29 +38,28 @@ private partial def headerCommands (header : Syntax) (out : Array Syntax := #[])
     if child.isOfKind nullKind then headerCommands child acc else acc.push child
 
 /-- Parses a whole file: the header, then one command at a time until `eoi`.
+Returns the top-level syntax nodes and how many syntax errors Lean reported.
 
 This is `Lean.Parser` used on its own: no elaboration runs, so nothing here needs
 the file to type check, and a file that does not type check still parses. -/
-private def parseFile (env : Environment) (ctx : Ctx) (path source : String) :
-    IO (Array Json × Nat) := do
+private def parseFile (env : Environment) (path source : String) : IO (Array Syntax × Nat) := do
   let inputCtx := Parser.mkInputContext source path
   let (header, mps, messages) ← Parser.parseHeader inputCtx
   let pmctx : Parser.ParserModuleContext := { env, options := {} }
-  let budget ← IO.mkRef ctx.maxNodes
-  let mut nodes : Array Json := #[]
+  let mut nodes : Array Syntax := #[]
   for command in headerCommands header.raw do
-    nodes := nodes.push (← nodeJson ctx budget 0 command)
+    nodes := nodes.push command
   let mut mps := mps
   let mut errors : Nat := messages.toList.length
   let mut keepGoing := true
-  while keepGoing && (← budget.get) > 0 do
+  while keepGoing do
     let (stx, mps', messages) := Parser.parseCommand inputCtx pmctx mps {}
     mps := mps'
     errors := errors + messages.toList.length
     if stx.isOfKind `Lean.Parser.Command.eoi then
       keepGoing := false
     else
-      nodes := nodes.push (← nodeJson ctx budget 0 stx)
+      nodes := nodes.push stx
   return (nodes, errors)
 
 /-- Environments by import list: the expensive part of parsing is loading the
@@ -140,90 +102,52 @@ private unsafe def envFor (imports : Array Name) : IO Environment := do
   envOrder.set order
   return env
 
-private def jsonString (value : Json) : String := Json.compress value
+end Lean4Ast
 
-private def ok (fields : List (String × Json)) : String :=
-  jsonString (Json.mkObj (("ok", toJson true) :: fields))
+open Lean4Ast
 
-private def fail (message : String) : String :=
-  jsonString (Json.mkObj [("ok", toJson false), ("error", toJson message)])
+/-- C entry point: `lean4_ast_lean_init(sysroot, paths)`.
 
-/-- Reads one string field of a request, `""` when absent. -/
-private def field (request : Json) (name : String) : String :=
-  match request.getObjValD name with
-  | .str value => value
-  | _ => ""
-
-private def fieldArray (request : Json) (name : String) : Array String :=
-  match request.getObjValD name with
-  | .arr values => values.map fun value => match value with
-      | .str text => text
-      | _ => ""
-  | _ => #[]
-
-/-- Parses one file. Request: `{"path","source","imports"}`, where `imports` names
-the modules whose syntax extensions the file may use (`["Init","Lean"]` is enough
-for a file that imports nothing). -/
-private unsafe def parseRequest (requestJson : String) : IO String := do
-  match Json.parse requestJson with
-  | .error error => return fail s!"bad request: {error}"
-  | .ok request =>
-    let path := field request "path"
-    let source := field request "source"
-    let imports := fieldArray request "imports"
-    if source.isEmpty then
-      return fail "the request carried no source"
-    let names := if imports.isEmpty then #[`Init, `Lean] else imports.map String.toName
-    let env ← envFor names
-    let (nodes, errors) ← parseFile env {} path source
-    return ok [("nodes", Json.arr nodes), ("syntaxErrors", toJson errors)]
-
-/-- Sets the module search path so that importing a project's modules works:
+Sets the module search path so that importing a project's modules works:
 `sysroot` is the Lean toolchain (`…/toolchains/leanprover--lean4---v4.36.0-rc2`),
 `paths` are extra module directories (a project's `.lake/build/lib/lean`).
+Answers `Except.error` (nothing to carry on with), or the Lean version paired with
+the resolved search path.
 
 `Lean.findSysroot` is deliberately not used: it looks for a `lean` executable
 next to the host process, which is not this library's business. -/
-private unsafe def initRequest (requestJson : String) : IO String := do
-  match Json.parse requestJson with
-  | .error error => return fail s!"bad request: {error}"
-  | .ok request =>
-    let sysroot := field request "sysroot"
-    let extra := (fieldArray request "paths").map System.FilePath.mk
-    if sysroot.isEmpty then
-      return fail "the request carried no sysroot: pass the Lean toolchain directory"
-    Lean.initSearchPath (System.FilePath.mk sysroot) (sp := extra.toList)
-    let path ← Lean.searchPathRef.get
-    return ok [
-      ("version", toJson Lean.versionString),
-      ("searchPath", Json.arr (path.map (fun entry => toJson entry.toString) |>.toArray)),
-    ]
-
-end Lean4Ast
-
-/-- C entry point: `lean4_ast_init(search_paths)` → JSON. -/
 @[export lean4_ast_lean_init]
-unsafe def leanAstInit (searchPaths : String) : IO String :=
-  Lean4Ast.initRequest searchPaths
+unsafe def leanAstInit (sysroot : String) (paths : Array String) :
+    IO (Except String (String × Array String)) := do
+  if sysroot.isEmpty then
+    return .error "no sysroot: pass the Lean toolchain directory"
+  Lean.initSearchPath (System.FilePath.mk sysroot) (sp := paths.toList.map System.FilePath.mk)
+  let path ← Lean.searchPathRef.get
+  return .ok (Lean.versionString, (path.map (fun entry => entry.toString)).toArray)
 
-/-- C entry point: `lean4_ast_parse(request_json)` → JSON. -/
+/-- C entry point: `lean4_ast_lean_parse(path, source, imports)`.
+
+`imports` names the modules whose syntax extensions the file may use (`Init` and
+`Lean` are assumed when it is empty, which is enough for a file that imports
+nothing). Answers `Except.error`, or the file's top-level syntax nodes together
+with the number of syntax errors the parser reported. -/
 @[export lean4_ast_lean_parse]
-unsafe def leanAstParse (requestJson : String) : IO String :=
-  Lean4Ast.parseRequest requestJson
+unsafe def leanAstParse (path : String) (source : String) (imports : Array String) :
+    IO (Except String (Array Syntax × Nat)) := do
+  if source.isEmpty then
+    return .error "the request carried no source"
+  let names := if imports.isEmpty then #[`Init, `Lean] else imports.map String.toName
+  let env ← envFor names
+  let (nodes, errors) ← parseFile env path source
+  return .ok (nodes, errors)
 
-/-- Temporary probe: walks the steps a first parse needs, printing each one. -/
-@[export probe_steps]
-unsafe def probeSteps (sysroot : String) : IO String := do
-  IO.eprintln "step 1: searchPathRef.set"
-  Lean.searchPathRef.set [System.FilePath.mk s!"{sysroot}/lib/lean"]
-  IO.eprintln "step 2: import Init"
-  Lean.enableInitializersExecution
-  let env ← Lean.importModules #[{ module := `Init }] {} (loadExts := false)
-  IO.eprintln s!"step 3: imported {env.header.moduleNames.toList.length} modules"
-  return "ok"
+/-- C entry point: `lean4_ast_lean_probe()`.
 
-/-- Temporary probe: read (not write) Lean's global search path. -/
-@[export probe_get]
-unsafe def probeGet (_ : String) : IO String := do
-  let p ← Lean.searchPathRef.get
-  return s!"search path has {p.length} entries"
+One `Syntax` value per constructor, in declaration order. The Rust side matches
+them against the object tags it assumes (`missing`, `node`, `atom`, `ident`) and
+against the number of fields each carries, so a Lean version that reorders or
+reshapes the constructors is caught at startup instead of read as garbage. -/
+@[export lean4_ast_lean_probe]
+unsafe def leanAstProbe (_ : Unit) : IO (Array Syntax) :=
+  return #[Syntax.missing, Syntax.node .none `probe #[], Syntax.atom .none "",
+    Syntax.ident .none (default : Substring.Raw) `probe []]
